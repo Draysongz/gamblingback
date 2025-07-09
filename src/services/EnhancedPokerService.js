@@ -685,6 +685,41 @@ class PokerService {
     this.resetGameState(room);
 
     console.log(`Poker showdown completed in room ${room.id}`);
+
+    // --- Auto-restart logic ---
+    const activePlayersForNext = room.players.filter((p) => p.chips > 0);
+    if (activePlayersForNext.length >= 2) {
+      const countdownSeconds = 10;
+      this.ws.broadcastToRoom(room.id, {
+        type: "new_game_countdown",
+        seconds: countdownSeconds,
+        room: room,
+      });
+      setTimeout(async () => {
+        // Re-fetch room to check if enough players remain
+        const latestRoom = await this.getRoom(room.id);
+        const stillEnough =
+          latestRoom.players.filter((p) => p.chips > 0).length >= 2;
+        if (stillEnough) {
+          try {
+            await this.startGame(room.id, latestRoom.creator.id);
+          } catch (err) {
+            logger.error("Auto-restart failed:", err);
+          }
+        } else {
+          this.ws.broadcastToRoom(room.id, {
+            type: "waiting_for_players",
+            room: latestRoom,
+          });
+        }
+      }, countdownSeconds * 1000);
+    } else {
+      // Not enough players, notify room
+      this.ws.broadcastToRoom(room.id, {
+        type: "waiting_for_players",
+        room: room,
+      });
+    }
   }
 
   resetGameState(room) {
